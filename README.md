@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Pi Dashboard
 
-## Getting Started
+A private home-network dashboard for monitoring and opening services across a small Raspberry Pi setup. It provides one browser-based view of system health, network nodes, self-hosted services, and cryptocurrency-mining processes.
 
-First, run the development server:
+The current installation monitors a main dashboard host, an Umbrel home server, and a separate mining node. Network addresses and SSH users are installation-specific and can be changed in the API route configuration.
+
+## Features
+
+- Live CPU temperature, memory, storage, uptime, load, and processor-count metrics
+- Online status and system metrics for multiple Raspberry Pi nodes
+- Service launchers and availability checks for Pironman, Umbrel, Portainer, BitBoard, and mining dashboards
+- Monero daemon status, synchronization progress, block height, and peer count
+- P2Pool process and Stratum-port status
+- XMRig status and resource usage across mining hosts
+- Quick links and SSH command shortcuts for common administration tasks
+- Responsive cyberpunk-style interface designed for daily LAN use
+
+## Technology
+
+- Next.js 16 App Router
+- React 19
+- TypeScript
+- Tailwind CSS 4 tooling and custom CSS
+- Server-side Node.js APIs for local system commands, TCP checks, HTTP checks, and SSH monitoring
+
+## Requirements
+
+- Node.js 20 or newer
+- npm
+- Linux on the dashboard host
+- Passwordless SSH access to monitored remote nodes
+- A dedicated monitoring key authorized on each remote node
+
+Set `PI_DASHBOARD_SSH_KEY` to the monitoring private-key path used by your installation.
+
+## Setup
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Create `.env.local` for optional mining-dashboard configuration:
+
+```env
+MONERO_WALLET_ADDRESS=your_monero_wallet_address
+MONERO_WORKER_NAME=your_worker_name
+PI_DASHBOARD_SSH_KEY=/path/to/monitoring_key
+```
+
+`MONERO_WALLET_ADDRESS` enables the OwnBlock miner link. `MONERO_WORKER_NAME` defaults to `Kira`, and `PI_DASHBOARD_SSH_KEY` may be omitted when using the default key path.
+
+Environment files are ignored by Git and must never be committed.
+
+## Running locally
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+To make the dashboard available to other devices on the LAN:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev -- --hostname 0.0.0.0
+```
 
-## Learn More
+Then open port `3000` using the dashboard Pi's hostname or IP address.
 
-To learn more about Next.js, take a look at the following resources:
+## Production build
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run build
+npm start -- --hostname 0.0.0.0
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For continuous use, run the production server through a service manager such as systemd so it starts automatically after boot.
 
-## Deploy on Vercel
+## Customizing the network
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The current node addresses, SSH users, service URLs, and mining host are specific to this installation. Update these files when adapting the dashboard to another network:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `app/page.tsx` — service cards, quick actions, node labels, and browser links
+- `app/api/nodes/route.ts` — node addresses, ports, SSH users, and remote metrics
+- `app/api/mining/route.ts` — remote mining host and process checks
+- `app/api/services/route.ts` — service health-check URLs
+- `next.config.ts` — permitted development origins
+
+## Checks
+
+```bash
+npm run lint
+npm run build
+```
+
+## Security
+
+This dashboard is intended for a trusted private network. Its server-side routes execute local system checks and connect to other machines over SSH. Do not expose it directly to the public internet without adding authentication, authorization, network restrictions, and appropriate hardening.
+
+Keep private keys and `.env.local` outside version control. The repository should contain configuration references only, never credentials.
