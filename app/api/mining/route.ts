@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { execFile } from "node:child_process";
+import net from "node:net";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -8,14 +9,8 @@ const monitoringKey =
   "/home/kira/.ssh/pi-dashboard-monitor";
 let cachedRpcInfo: Record<string, unknown> | null = null;
 
-const miningStatusCommand = [
+const remoteMiningStatusCommand = [
   "printf 'MONEROD='; systemctl is-active monerod 2>/dev/null || true",
-  "printf 'P2POOL='; if pgrep -x p2pool >/dev/null; then printf 'active\\n'; else printf 'inactive\\n'; fi",
-  "printf 'P2POOL_PORT='; if ss -ltn 2>/dev/null | grep -q ':3333 '; then printf 'open\\n'; else printf 'closed\\n'; fi",
-  "printf 'XMRIG='; if pgrep -x xmrig >/dev/null; then printf 'active\\n'; else printf 'inactive\\n'; fi",
-  "printf 'XMRIG_CPU='; ps -C xmrig -o %cpu= 2>/dev/null | awk '{sum += $1} END {printf \"%.1f\\n\", sum}'",
-  "printf 'XMRIG_MEMORY='; ps -C xmrig -o %mem= 2>/dev/null | awk '{sum += $1} END {printf \"%.1f\\n\", sum}'",
-  "printf 'RPC='; curl --silent --max-time 8 -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":\"dashboard\",\"method\":\"get_info\"}' http://127.0.0.1:18081/json_rpc | tr -d '\\n' || true; printf '\\n'",
 ].join("; ");
 
 function readValue(output: string, key: string) {
@@ -27,49 +22,155 @@ function readValue(output: string, key: string) {
   );
 }
 
-type XmrigStatus = {
-  running: boolean;
-  cpuPercent: number;
-  memoryPercent: number;
-};
+function stripTerminalColors(value: string) {
+  let clean = "";
+  let inEscapeSequence = false;
 
-async function getLocalXmrigStatus(): Promise<XmrigStatus> {
+  for (const character of value) {
+    if (character.charCodeAt(0) === 27) {
+      inEscapeSequence = true;
+      continue;
+    }
+
+    if (inEscapeSequence) {
+      if (/[A-Za-z]/.test(character)) {
+        inEscapeSequence = false;
+      }
+      continue;
+    }
+
+    clean += character;
+  }
+
+  return clean;
+}
+
+async function getServiceStatus(service: string) {
   try {
     const { stdout } = await execFileAsync(
-      "ps",
-      ["-C", "xmrig", "-o", "%cpu=,%mem="],
+      "systemctl",
+      ["is-active", service],
       {
         encoding: "utf8",
         timeout: 2000,
       }
     );
 
-    const processes = stdout
+    return stdout.trim();
+  } catch (error) {
+    const stdout = (error as { stdout?: string }).stdout;
+    return stdout?.trim() || "unknown";
+  }
+}
+
+function checkLocalPort(port: number) {
+  return new Promise<boolean>((resolve) => {
+    const socket = net.createConnection({
+      host: "127.0.0.1",
+      port,
+    });
+
+    const finish = (open: boolean) => {
+      socket.destroy();
+      resolve(open);
+    };
+
+    socket.setTimeout(1500);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+type XmrigStatus = {
+  running: boolean;
+  serviceStatus: string;
+  cpuPercent: number;
+  memoryPercent: number;
+  hashRateHps: number | null;
+};
+
+async function getXmrigProcessUsage() {
+  try {
+    const { stdout: mainPidOutput } = await execFileAsync(
+      "systemctl",
+      ["show", "xmrig", "--property=MainPID", "--value"],
+      {
+        encoding: "utf8",
+        timeout: 2000,
+      }
+    );
+    const mainPid = Number(mainPidOutput.trim());
+
+    if (!mainPid) {
+      throw new Error("XMRig has no active process");
+    }
+
+    const { stdout } = await execFileAsync(
+      "ps",
+      ["-p", String(mainPid), "-o", "%cpu=,%mem="],
+      {
+        encoding: "utf8",
+        timeout: 2000,
+      }
+    );
+
+    const [cpuPercent = 0, memoryPercent = 0] = stdout
       .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => line.trim().split(/\s+/).map(Number));
+      .split(/\s+/)
+      .map(Number);
 
     return {
-      running: processes.length > 0,
-      cpuPercent: Number(
-        processes
-          .reduce((total, process) => total + process[0], 0)
-          .toFixed(1)
-      ),
-      memoryPercent: Number(
-        processes
-          .reduce((total, process) => total + process[1], 0)
-          .toFixed(1)
-      ),
+      cpuPercent: Number(cpuPercent.toFixed(1)),
+      memoryPercent: Number(memoryPercent.toFixed(1)),
     };
   } catch {
     return {
-      running: false,
       cpuPercent: 0,
       memoryPercent: 0,
     };
   }
+}
+
+async function getXmrigHashRate() {
+  try {
+    const { stdout } = await execFileAsync(
+      "journalctl",
+      ["-u", "xmrig", "--no-pager", "-n", "200", "-o", "cat"],
+      {
+        encoding: "utf8",
+        timeout: 2500,
+      }
+    );
+
+    const speedLine = stripTerminalColors(stdout)
+      .split("\n")
+      .reverse()
+      .find((line) => line.includes("speed 10s/60s/15m"));
+    const match = speedLine?.match(
+      /speed\s+10s\/60s\/15m\s+[\d.]+\s+([\d.]+)\s+[\d.]+\s+H\/s/
+    );
+
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getLocalXmrigStatus(): Promise<XmrigStatus> {
+  const [serviceStatus, usage, hashRateHps] = await Promise.all([
+    getServiceStatus("xmrig"),
+    getXmrigProcessUsage(),
+    getXmrigHashRate(),
+  ]);
+  const running = serviceStatus === "active";
+
+  return {
+    running,
+    serviceStatus,
+    ...usage,
+    hashRateHps: running ? hashRateHps : null,
+  };
 }
 
 async function getRemoteMiningOutput() {
@@ -91,7 +192,7 @@ async function getRemoteMiningOutput() {
           "-o",
           "StrictHostKeyChecking=yes",
           "kira@192.168.6.128",
-          miningStatusCommand,
+          remoteMiningStatusCommand,
         ],
         {
           encoding: "utf8",
@@ -108,34 +209,64 @@ async function getRemoteMiningOutput() {
   throw lastError;
 }
 
+async function getMoneroRpcInfo() {
+  const response = await fetch(
+    "http://192.168.6.128:18081/json_rpc",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "dashboard",
+        method: "get_info",
+      }),
+      signal: AbortSignal.timeout(8000),
+      cache: "no-store",
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Monero RPC returned ${response.status}`);
+  }
+
+  const rpcResponse = (await response.json()) as {
+    result?: Record<string, unknown>;
+  };
+
+  return rpcResponse.result ?? null;
+}
+
 export async function GET() {
   try {
-    const [stdout, localXmrig] = await Promise.all([
-      getRemoteMiningOutput(),
-      getLocalXmrigStatus(),
-    ]);
+    const [
+      remoteOutput,
+      freshRpcInfo,
+      p2poolServiceStatus,
+      stratumReady,
+      xmrig,
+    ] =
+      await Promise.all([
+        getRemoteMiningOutput().catch((error) => {
+          console.warn("[api/mining] monerod host unavailable", {
+            error: String(error),
+          });
+          return null;
+        }),
+        getMoneroRpcInfo().catch(() => null),
+        getServiceStatus("p2pool"),
+        checkLocalPort(3333),
+        getLocalXmrigStatus(),
+      ]);
 
-    const rawRpc = readValue(stdout, "RPC");
-    let freshRpcInfo: Record<string, unknown> | null = null;
-
-    if (rawRpc) {
-      try {
-        const rpcResponse = JSON.parse(rawRpc) as {
-          result?: Record<string, unknown>;
-        };
-
-        freshRpcInfo = rpcResponse.result ?? null;
-      } catch {
-        freshRpcInfo = null;
-      }
-    }
+    const stdout = remoteOutput ?? "";
 
     if (freshRpcInfo) {
       cachedRpcInfo = freshRpcInfo;
     }
 
     const rpcInfo = freshRpcInfo ?? cachedRpcInfo;
-
     const incomingPeers = Number(
       rpcInfo?.incoming_connections_count ?? 0
     );
@@ -143,9 +274,7 @@ export async function GET() {
       rpcInfo?.outgoing_connections_count ?? 0
     );
     const height =
-      typeof rpcInfo?.height === "number"
-        ? rpcInfo.height
-        : null;
+      typeof rpcInfo?.height === "number" ? rpcInfo.height : null;
     const targetHeight =
       typeof rpcInfo?.target_height === "number"
         ? rpcInfo.target_height
@@ -153,7 +282,9 @@ export async function GET() {
 
     return NextResponse.json({
       monero: {
-        serviceStatus: readValue(stdout, "MONEROD"),
+        serviceStatus: remoteOutput
+          ? readValue(stdout, "MONEROD")
+          : "unavailable",
         rpcAvailable: rpcInfo !== null,
         rpcStale: freshRpcInfo === null && rpcInfo !== null,
         synchronized:
@@ -165,33 +296,17 @@ export async function GET() {
         syncPercent:
           height !== null && targetHeight
             ? Number(
-                Math.min(
-                  100,
-                  (height / targetHeight) * 100
-                ).toFixed(1)
+                Math.min(100, (height / targetHeight) * 100).toFixed(1)
               )
             : null,
-        peers: rpcInfo
-          ? incomingPeers + outgoingPeers
-          : null,
+        peers: rpcInfo ? incomingPeers + outgoingPeers : null,
       },
       p2pool: {
-        running: readValue(stdout, "P2POOL") === "active",
-        stratumReady:
-          readValue(stdout, "P2POOL_PORT") === "open",
+        running: p2poolServiceStatus === "active",
+        serviceStatus: p2poolServiceStatus,
+        stratumReady,
       },
-      xmrig: {
-        raspberrypi: localXmrig,
-        raspPi4: {
-          running: readValue(stdout, "XMRIG") === "active",
-          cpuPercent: Number(
-            readValue(stdout, "XMRIG_CPU") || 0
-          ),
-          memoryPercent: Number(
-            readValue(stdout, "XMRIG_MEMORY") || 0
-          ),
-        },
-      },
+      xmrig,
       checkedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -201,7 +316,7 @@ export async function GET() {
 
     return NextResponse.json(
       {
-        error: "Unable to reach mining host",
+        error: "Unable to check mining services",
         checkedAt: new Date().toISOString(),
       },
       { status: 503 }

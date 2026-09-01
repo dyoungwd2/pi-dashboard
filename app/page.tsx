@@ -63,19 +63,19 @@ type MiningStatus = {
   };
   p2pool: {
     running: boolean;
+    serviceStatus: string;
     stratumReady: boolean;
   };
-  xmrig: {
-    raspberrypi: XmrigStatus;
-    raspPi4: XmrigStatus;
-  };
+  xmrig: XmrigStatus;
   checkedAt: string;
 };
 
 type XmrigStatus = {
   running: boolean;
+  serviceStatus: string;
   cpuPercent: number;
   memoryPercent: number;
+  hashRateHps: number | null;
 };
 
 type SyncTrend = {
@@ -182,17 +182,6 @@ const networkNodes = [
     key: "rasp-pi4",
     name: "rasp-pi4",
     address: "192.168.6.128",
-  },
-];
-
-const xmrigHosts = [
-  {
-    key: "raspberrypi" as const,
-    label: "raspberrypi",
-  },
-  {
-    key: "raspPi4" as const,
-    label: "rasp-pi4",
   },
 ];
 
@@ -691,36 +680,42 @@ export default function Home() {
         </p>
       )}
 
-      <h2>MINING STATUS</h2>
+      <h2>MONERO STACK</h2>
       <section className="miningGrid">
         <div className="miningCard">
-          <h3>Monero Node</h3>
+          <h3>monerod</h3>
+          <p className="miningHost">
+            rasp-pi4 · 192.168.6.128
+          </p>
           <p className="miningStatus">
             <span
               className={`statusDot ${
-                miningStatus?.monero.rpcAvailable
-                  ? miningStatus.monero.rpcStale ||
-                    syncTrend.stalled
-                    ? "warning"
-                    : "online"
-                  : miningStatus
-                    ? "offline"
-                    : "checking"
+                miningStatus?.monero.serviceStatus === "active"
+                  ? miningStatus.monero.rpcAvailable &&
+                    !miningStatus.monero.rpcStale &&
+                    !syncTrend.stalled
+                    ? "online"
+                    : "warning"
+                  : miningStatus ? "offline" : "checking"
               }`}
               aria-hidden="true"
             />
-            {miningStatus?.monero.rpcAvailable
-              ? miningStatus.monero.rpcStale
-                ? "Sync data delayed"
-                : miningStatus.monero.synchronized
-                ? "Synchronized"
-                : syncTrend.stalled
-                  ? "Sync stalled"
-                  : "Synchronizing"
+            {miningStatus?.monero.serviceStatus === "active"
+              ? miningStatus.monero.rpcAvailable
+                ? miningStatus.monero.rpcStale
+                  ? "Sync data delayed"
+                  : miningStatus.monero.synchronized
+                    ? "Synchronized"
+                    : syncTrend.stalled
+                      ? "Sync stalled"
+                      : "Synchronizing"
+                : "Active · RPC unavailable"
               : miningStatus
                 ? miningStatus.monero.serviceStatus === "activating"
                   ? "Restarting"
-                  : "Offline"
+                  : miningStatus.monero.serviceStatus === "unavailable"
+                    ? "Host unreachable"
+                    : "Offline"
                 : "Checking..."}
           </p>
           <dl className="miningDetails">
@@ -765,7 +760,10 @@ export default function Home() {
         </div>
 
         <div className="miningCard">
-          <h3>P2Pool</h3>
+          <h3>P2Pool Nano</h3>
+          <p className="miningHost">
+            raspberrypi · Local Stratum :3333
+          </p>
           <p className="miningStatus">
             <span
               className={`statusDot ${
@@ -797,55 +795,66 @@ export default function Home() {
           </dl>
         </div>
 
-        {xmrigHosts.map((host) => {
-          const miner = miningStatus?.xmrig[host.key];
-
-          return (
-            <div key={host.key} className="miningCard">
-              <h3>XMRig · {host.label}</h3>
-              <p className="miningStatus">
-                <span
-                  className={`statusDot ${
-                    miner?.running
-                      ? "online"
-                      : miningStatus
-                        ? "offline"
-                        : "checking"
-                  }`}
-                  aria-hidden="true"
-                />
-                {miner
-                  ? miner.running
-                    ? "Running"
-                    : "Stopped"
-                  : "Checking..."}
-              </p>
-              <dl className="miningDetails">
-                <div>
-                  <dt>CPU</dt>
-                  <dd>
-                    {miner ? (
-                      <>
-                        {miner.cpuPercent}%
-                        <small>
-                          {(miner.cpuPercent / 100).toFixed(2)} cores
-                        </small>
-                      </>
-                    ) : (
-                      "—"
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Memory</dt>
-                  <dd>
-                    {miner ? `${miner.memoryPercent}%` : "—"}
-                  </dd>
-                </div>
-              </dl>
+        <div className="miningCard">
+          <h3>XMRig</h3>
+          <p className="miningHost">raspberrypi · 2 threads</p>
+          <p className="miningStatus">
+            <span
+              className={`statusDot ${
+                miningStatus?.xmrig.running
+                  ? "online"
+                  : miningStatus
+                    ? "offline"
+                    : "checking"
+              }`}
+              aria-hidden="true"
+            />
+            {miningStatus
+              ? miningStatus.xmrig.running
+                ? "Running"
+                : "Stopped"
+              : "Checking..."}
+          </p>
+          <dl className="miningDetails">
+            <div>
+              <dt>Hashrate</dt>
+              <dd>
+                {miningStatus?.xmrig.hashRateHps !== null &&
+                miningStatus?.xmrig.hashRateHps !== undefined
+                  ? `${miningStatus.xmrig.hashRateHps.toFixed(1)} H/s`
+                  : "Unavailable"}
+                <small>60-second average</small>
+              </dd>
             </div>
-          );
-        })}
+            <div>
+              <dt>Threads</dt>
+              <dd>2</dd>
+            </div>
+            <div>
+              <dt>CPU</dt>
+              <dd>
+                {miningStatus ? (
+                  <>
+                    {miningStatus.xmrig.cpuPercent}%
+                    <small>
+                      {(miningStatus.xmrig.cpuPercent / 100).toFixed(2)} cores
+                    </small>
+                  </>
+                ) : (
+                  "—"
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Memory</dt>
+              <dd>
+                {miningStatus
+                  ? `${miningStatus.xmrig.memoryPercent}%`
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
+        </div>
       </section>
 
       {miningStatus && (

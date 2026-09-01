@@ -323,8 +323,14 @@ a {
 }
 
 .miningCard h3 {
-  margin: 0 0 14px;
+  margin: 0 0 6px;
   font-size: 1.2rem;
+}
+
+.miningHost {
+  margin: 0 0 14px;
+  color: #687386;
+  font-size: 0.82rem;
 }
 
 .miningStatus {

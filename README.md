@@ -2,7 +2,7 @@
 
 A private home-network dashboard for monitoring and opening services across a small Raspberry Pi setup. It provides one browser-based view of system health, network nodes, self-hosted services, and cryptocurrency-mining processes.
 
-The current installation monitors a main dashboard host, an Umbrel home server, and a separate mining node. Network addresses and SSH users are installation-specific and can be changed in the API route configuration.
+The current installation monitors a main dashboard host, an Umbrel home server, and a separate Monero node. P2Pool Nano and XMRig run on the dashboard host, while monerod runs on the remote node. Network addresses and SSH users are installation-specific and can be changed in the API route configuration.
 
 ## Features
 
@@ -10,8 +10,8 @@ The current installation monitors a main dashboard host, an Umbrel home server, 
 - Online status and system metrics for multiple Raspberry Pi nodes
 - Service launchers and availability checks for Pironman, Umbrel, Portainer, BitBoard, and mining dashboards
 - Monero daemon status, synchronization progress, block height, and peer count
-- P2Pool process and Stratum-port status
-- XMRig status and resource usage across mining hosts
+- Local P2Pool Nano service and Stratum-port status
+- Local XMRig service status, 60-second hashrate, thread count, and resource usage
 - Quick links and SSH command shortcuts for common administration tasks
 - Responsive cyberpunk-style interface designed for daily LAN use
 
@@ -86,7 +86,7 @@ The current node addresses, SSH users, service URLs, and mining host are specifi
 
 - `app/page.tsx` — service cards, quick actions, node labels, and browser links
 - `app/api/nodes/route.ts` — node addresses, ports, SSH users, and remote metrics
-- `app/api/mining/route.ts` — remote mining host and process checks
+- `app/api/mining/route.ts` — remote monerod and local P2Pool/XMRig checks
 - `app/api/services/route.ts` — service health-check URLs
 - `next.config.ts` — permitted development origins
 
